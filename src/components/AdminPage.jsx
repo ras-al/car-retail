@@ -28,6 +28,7 @@ function AdminPage({ user }) {
     const [formPrice, setFormPrice] = useState('');
     const [formDescription, setFormDescription] = useState('');
     const [formImageData, setFormImageData] = useState(''); // Base64 image data
+    const [isCompressingImage, setIsCompressingImage] = useState(false); // New state for compression
     const [message, setMessage] = useState(null); // For custom message box
 
     useEffect(() => {
@@ -95,15 +96,64 @@ function AdminPage({ user }) {
 
     const handleImageUpload = (e) => {
         const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setFormImageData(reader.result); // reader.result contains the base64 string
-            };
-            reader.readAsDataURL(file); // Read the file as a data URL (base64)
-        } else {
+        if (!file) {
             setFormImageData('');
+            return;
         }
+
+        setIsCompressingImage(true);
+        const reader = new FileReader();
+
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+
+            img.onload = () => {
+                const MAX_WIDTH = 800; // Max width for the compressed image
+                const MAX_HEIGHT = 600; // Max height for the compressed image
+                const QUALITY = 0.7; // JPEG compression quality (0.0 to 1.0)
+                let width = img.width;
+                let height = img.height;
+
+                // Calculate new dimensions to fit within MAX_WIDTH/MAX_HEIGHT while maintaining aspect ratio
+                if (width > height) {
+                    if (width > MAX_WIDTH) {
+                        height *= MAX_WIDTH / width;
+                        width = MAX_WIDTH;
+                    }
+                } else {
+                    if (height > MAX_HEIGHT) {
+                        width *= MAX_HEIGHT / height;
+                        height = MAX_HEIGHT;
+                    }
+                }
+
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                // Convert canvas content to JPEG Base64 string
+                const compressedBase64 = canvas.toDataURL('image/jpeg', QUALITY);
+                setFormImageData(compressedBase64);
+                setIsCompressingImage(false);
+            };
+
+            img.onerror = () => {
+                setIsCompressingImage(false);
+                showMessage("Failed to load image. Please try another file.");
+                setFormImageData('');
+            };
+        };
+
+        reader.onerror = () => {
+            setIsCompressingImage(false);
+            showMessage("Failed to read file. Please try again.");
+            setFormImageData('');
+        };
+
+        reader.readAsDataURL(file); // Read the file as a data URL (base64) initially
     };
 
     const handleAddOrUpdateCar = async (e) => {
@@ -114,7 +164,7 @@ function AdminPage({ user }) {
             year: parseInt(formYear),
             price: parseFloat(formPrice),
             description: formDescription,
-            imageData: formImageData, // This will now contain the base64 string
+            imageData: formImageData, // This will now contain the compressed base64 string
         };
 
         if (isNaN(carData.year) || isNaN(carData.price)) {
@@ -123,6 +173,10 @@ function AdminPage({ user }) {
         }
         if (!carData.make || !carData.model || !carData.description) {
             showMessage("Please fill in all required text fields.");
+            return;
+        }
+        if (!carData.imageData) {
+            showMessage("Please upload an image for the car.");
             return;
         }
 
@@ -243,7 +297,6 @@ function AdminPage({ user }) {
                     {loginError && <p style={{ color: '#ff5555', fontSize: '0.9em' }}>{loginError}</p>}
                     <button type="submit">Login</button>
                 </form>
-                
             </div>
         );
     }
@@ -306,9 +359,17 @@ function AdminPage({ user }) {
                         type="file"
                         accept="image/jpeg, image/png"
                         onChange={handleImageUpload}
-                        // Only require file input if not editing an existing car that already has an image
-                        required={!editingCar || !formImageData}
+                        disabled={isCompressingImage} // Disable input during compression
                     />
+                    {isCompressingImage && (
+                        <p className="image-upload-status compressing">Compressing image...</p>
+                    )}
+                    {formImageData && !isCompressingImage && (
+                        <p className="image-upload-status">Image ready for upload.</p>
+                    )}
+                    {!formImageData && !isCompressingImage && !editingCar && (
+                         <p className="image-upload-status">Please upload an image.</p>
+                    )}
                 </label>
                 {formImageData && (
                     <div style={{ textAlign: 'center', marginBottom: '15px' }}>
@@ -324,8 +385,10 @@ function AdminPage({ user }) {
                         />
                     </div>
                 )}
-                <button type="submit">{editingCar ? 'Update Car' : 'Add Car'}</button>
-                {editingCar && <button type="button" onClick={clearForm}>Cancel Edit</button>}
+                <button type="submit" disabled={isCompressingImage}>
+                    {editingCar ? 'Update Car' : 'Add Car'}
+                </button>
+                {editingCar && <button type="button" onClick={clearForm} disabled={isCompressingImage}>Cancel Edit</button>}
             </form>
 
             <h3 style={{ marginTop: '40px' }}>Current Car Listings</h3>
@@ -354,7 +417,7 @@ function AdminPage({ user }) {
                                         <td>{car.make}</td>
                                         <td>{car.model}</td>
                                         <td>{car.year}</td>
-                                        <td>${car.price ? car.price.toLocaleString() : 'N/A'}</td>
+                                        <td>Rs.{car.price ? car.price.toLocaleString() : 'N/A'}</td>
                                         <td>{car.description.substring(0, 50)}{car.description.length > 50 ? '...' : ''}</td>
                                         <td>
                                             <img
