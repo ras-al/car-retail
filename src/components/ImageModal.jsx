@@ -1,7 +1,8 @@
 // src/components/ImageModal.jsx
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
-function ImageModal({ imageUrl, onClose }) {
+function ImageModal({ images, initialImageIndex = 0, onClose }) {
+    const [currentImageIndex, setCurrentImageIndex] = useState(initialImageIndex);
     const [scale, setScale] = useState(1);
     const [position, setPosition] = useState({ x: 0, y: 0 });
     const [isDragging, setIsDragging] = useState(false);
@@ -9,7 +10,7 @@ function ImageModal({ imageUrl, onClose }) {
     const imageRef = useRef(null);
     const contentRef = useRef(null);
 
-    // Reset position and scale when image changes or modal opens/closes
+    // Reset position and scale when image changes (currentImageIndex) or modal opens/closes
     useEffect(() => {
         setScale(1);
         setPosition({ x: 0, y: 0 });
@@ -18,7 +19,7 @@ function ImageModal({ imageUrl, onClose }) {
         return () => {
             document.body.style.overflow = ''; // Re-enable scrolling on unmount
         };
-    }, [imageUrl]);
+    }, [currentImageIndex, images]);
 
     const handleWheel = useCallback((e) => {
         e.preventDefault(); // Prevent page scrolling
@@ -29,8 +30,6 @@ function ImageModal({ imageUrl, onClose }) {
         // Adjust position to zoom towards mouse cursor
         if (imageRef.current && contentRef.current && scale !== newScale) {
             const imageRect = imageRef.current.getBoundingClientRect();
-            const contentRect = contentRef.current.getBoundingClientRect();
-
             // Mouse position relative to image
             const mouseX = e.clientX - imageRect.left;
             const mouseY = e.clientY - imageRect.top;
@@ -115,13 +114,12 @@ function ImageModal({ imageUrl, onClose }) {
             imageElement.addEventListener('mousedown', handleMouseDown);
             imageElement.addEventListener('mousemove', handleMouseMove);
             imageElement.addEventListener('mouseup', handleMouseUp);
-            imageElement.addEventListener('mouseleave', handleMouseUp); // End drag if mouse leaves image
+            imageElement.addEventListener('mouseleave', handleMouseUp);
 
-            // Touch events for mobile
             imageElement.addEventListener('touchstart', handleTouchStart, { passive: false });
             imageElement.addEventListener('touchmove', handleTouchMove, { passive: false });
             imageElement.addEventListener('touchend', handleTouchEnd);
-            imageElement.addEventListener('touchcancel', handleTouchEnd); // For when touch is interrupted
+            imageElement.addEventListener('touchcancel', handleTouchEnd);
         }
 
         return () => {
@@ -140,18 +138,35 @@ function ImageModal({ imageUrl, onClose }) {
         };
     }, [handleWheel, handleMouseDown, handleMouseMove, handleMouseUp, handleTouchStart, handleTouchMove, handleTouchEnd]);
 
+    const handlePrev = () => {
+        setCurrentImageIndex((prevIndex) => (prevIndex === 0 ? images.length - 1 : prevIndex - 1));
+    };
+
+    const handleNext = () => {
+        setCurrentImageIndex((prevIndex) => (prevIndex === images.length - 1 ? 0 : prevIndex + 1));
+    };
+
+    if (!images || images.length === 0) return null; // Don't render if no images
 
     return (
         <div className="image-modal-overlay" onClick={onClose}>
             <div className="image-modal-content" ref={contentRef} onClick={(e) => e.stopPropagation()}>
                 <button className="image-modal-close" onClick={onClose}>&times;</button>
+
+                {images.length > 1 && (
+                    <>
+                        <button className="image-modal-nav-button prev" onClick={handlePrev}>&#9664;</button>
+                        <button className="image-modal-nav-button next" onClick={handleNext}>&#9654;</button>
+                    </>
+                )}
+
                 <img
                     ref={imageRef}
-                    src={imageUrl}
-                    alt="Full View"
+                    src={images[currentImageIndex] || 'https://placehold.co/800x600/555/FFF?text=Image+Load+Error'}
+                    alt={`Car Image ${currentImageIndex + 1}`}
                     style={{
                         transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
-                        transformOrigin: '0 0', // Crucial for correct zoom point
+                        transformOrigin: '0 0',
                     }}
                     onError={(e) => {
                         e.target.onerror = null;
@@ -159,6 +174,7 @@ function ImageModal({ imageUrl, onClose }) {
                     }}
                 />
                 <p className="image-modal-info">
+                    {images.length > 1 && `${currentImageIndex + 1} / ${images.length} - `}
                     {scale > 1 ? 'Drag to pan, scroll to zoom' : 'Scroll to zoom'}
                 </p>
             </div>

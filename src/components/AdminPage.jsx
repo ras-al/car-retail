@@ -1,5 +1,5 @@
 // src/components/AdminPage.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     signInWithEmailAndPassword,
     signOut,
@@ -21,18 +21,17 @@ function AdminPage({ user }) {
     const [loginError, setLoginError] = useState('');
     const [cars, setCars] = useState([]);
     const [loadingCars, setLoadingCars] = useState(true);
-    const [editingCar, setEditingCar] = useState(null); // null or car object for editing
+    const [editingCar, setEditingCar] = useState(null);
     const [formMake, setFormMake] = useState('');
     const [formModel, setFormModel] = useState('');
     const [formYear, setFormYear] = useState('');
     const [formPrice, setFormPrice] = useState('');
     const [formDescription, setFormDescription] = useState('');
-    const [formImageData, setFormImageData] = useState(''); // Base64 image data
-    const [isCompressingImage, setIsCompressingImage] = useState(false); // New state for compression
-    const [message, setMessage] = useState(null); // For custom message box
+    const [formImagesData, setFormImagesData] = useState([]); // Changed to array for multiple images
+    const [isCompressingImage, setIsCompressingImage] = useState(false);
+    const [message, setMessage] = useState(null);
 
     useEffect(() => {
-        // Use onAuthStateChanged to ensure user state is updated correctly for this component
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             if (currentUser) {
                 fetchCars();
@@ -41,8 +40,8 @@ function AdminPage({ user }) {
                 setLoadingCars(false);
             }
         });
-        return () => unsubscribe(); // Cleanup listener
-    }, []); // Only run once on component mount
+        return () => unsubscribe();
+    }, []);
 
     const fetchCars = async () => {
         setLoadingCars(true);
@@ -50,7 +49,6 @@ function AdminPage({ user }) {
             const carsCollectionRef = collection(db, `artifacts/${appId}/public/data/cars`);
             const unsubscribe = onSnapshot(carsCollectionRef, (snapshot) => {
                 const carsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                // Sort cars by year descending (latest first)
                 carsData.sort((a, b) => b.year - a.year);
                 setCars(carsData);
                 setLoadingCars(false);
@@ -58,7 +56,6 @@ function AdminPage({ user }) {
                 console.error("Error fetching cars:", error);
                 setLoadingCars(false);
             });
-            // Return the unsubscribe function so it can be called if component unmounts
             return unsubscribe;
         } catch (error) {
             console.error("Error setting up cars listener:", error);
@@ -73,7 +70,6 @@ function AdminPage({ user }) {
             await signInWithEmailAndPassword(auth, email, password);
             setEmail('');
             setPassword('');
-            // The onAuthStateChanged listener will update the 'user' prop in App.jsx
         } catch (error) {
             console.error("Login error:", error.message);
             if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
@@ -90,70 +86,81 @@ function AdminPage({ user }) {
         setFormYear('');
         setFormPrice('');
         setFormDescription('');
-        setFormImageData('');
+        setFormImagesData([]); // Clear image data array
         setEditingCar(null);
     };
 
-    const handleImageUpload = (e) => {
-        const file = e.target.files[0];
-        if (!file) {
-            setFormImageData('');
-            return;
-        }
+    const compressImage = useCallback((file) => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target.result;
+
+                img.onload = () => {
+                    const MAX_WIDTH = 800; // Max width for the compressed image
+                    const MAX_HEIGHT = 600; // Max height for the compressed image
+                    const QUALITY = 0.7; // JPEG compression quality (0.0 to 1.0)
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    const compressedBase64 = canvas.toDataURL('image/jpeg', QUALITY);
+                    resolve(compressedBase64);
+                };
+
+                img.onerror = (error) => {
+                    reject(new Error("Failed to load image for compression."));
+                };
+            };
+            reader.onerror = (error) => {
+                reject(new Error("Failed to read file for compression."));
+            };
+            reader.readAsDataURL(file);
+        });
+    }, []);
+
+    const handleImageUpload = async (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
 
         setIsCompressingImage(true);
-        const reader = new FileReader();
+        const newImages = [];
+        for (const file of files) {
+            try {
+                const compressedData = await compressImage(file);
+                newImages.push(compressedData);
+            } catch (error) {
+                console.error("Error compressing image:", file.name, error);
+                showMessage(`Failed to process image: ${file.name}.`);
+            }
+        }
+        // Append new images to existing ones (if any)
+        setFormImagesData((prevImages) => [...prevImages, ...newImages]);
+        setIsCompressingImage(false);
+        // Clear the file input after processing
+        e.target.value = '';
+    };
 
-        reader.onload = (event) => {
-            const img = new Image();
-            img.src = event.target.result;
-
-            img.onload = () => {
-                const MAX_WIDTH = 800; // Max width for the compressed image
-                const MAX_HEIGHT = 600; // Max height for the compressed image
-                const QUALITY = 0.7; // JPEG compression quality (0.0 to 1.0)
-                let width = img.width;
-                let height = img.height;
-
-                // Calculate new dimensions to fit within MAX_WIDTH/MAX_HEIGHT while maintaining aspect ratio
-                if (width > height) {
-                    if (width > MAX_WIDTH) {
-                        height *= MAX_WIDTH / width;
-                        width = MAX_WIDTH;
-                    }
-                } else {
-                    if (height > MAX_HEIGHT) {
-                        width *= MAX_HEIGHT / height;
-                        height = MAX_HEIGHT;
-                    }
-                }
-
-                const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-
-                // Convert canvas content to JPEG Base64 string
-                const compressedBase64 = canvas.toDataURL('image/jpeg', QUALITY);
-                setFormImageData(compressedBase64);
-                setIsCompressingImage(false);
-            };
-
-            img.onerror = () => {
-                setIsCompressingImage(false);
-                showMessage("Failed to load image. Please try another file.");
-                setFormImageData('');
-            };
-        };
-
-        reader.onerror = () => {
-            setIsCompressingImage(false);
-            showMessage("Failed to read file. Please try again.");
-            setFormImageData('');
-        };
-
-        reader.readAsDataURL(file); // Read the file as a data URL (base64) initially
+    const handleRemoveImage = (indexToRemove) => {
+        setFormImagesData((prevImages) => prevImages.filter((_, index) => index !== indexToRemove));
     };
 
     const handleAddOrUpdateCar = async (e) => {
@@ -164,7 +171,7 @@ function AdminPage({ user }) {
             year: parseInt(formYear),
             price: parseFloat(formPrice),
             description: formDescription,
-            imageData: formImageData, // This will now contain the compressed base64 string
+            imagesData: formImagesData, // Now an array of Base64 strings
         };
 
         if (isNaN(carData.year) || isNaN(carData.price)) {
@@ -175,19 +182,17 @@ function AdminPage({ user }) {
             showMessage("Please fill in all required text fields.");
             return;
         }
-        if (!carData.imageData) {
-            showMessage("Please upload an image for the car.");
+        if (carData.imagesData.length === 0) {
+            showMessage("Please upload at least one image for the car.");
             return;
         }
 
         try {
             if (editingCar) {
-                // Update existing car
                 const carDocRef = doc(db, `artifacts/${appId}/public/data/cars`, editingCar.id);
                 await updateDoc(carDocRef, carData);
                 showMessage("Car updated successfully!");
             } else {
-                // Add new car
                 const carsCollectionRef = collection(db, `artifacts/${appId}/public/data/cars`);
                 await addDoc(carsCollectionRef, carData);
                 showMessage("Car added successfully!");
@@ -206,13 +211,13 @@ function AdminPage({ user }) {
         setFormYear(car.year);
         setFormPrice(car.price);
         setFormDescription(car.description);
-        setFormImageData(car.imageData); // Set existing image data
+        setFormImagesData(car.imagesData || []); // Populate with existing images, default to empty array
     };
 
     const handleDeleteCar = async (carId) => {
         showMessage(
             "Are you sure you want to delete this car?",
-            true, // isConfirm
+            true,
             async () => {
                 try {
                     const carDocRef = doc(db, `artifacts/${appId}/public/data/cars`, carId);
@@ -232,23 +237,22 @@ function AdminPage({ user }) {
             return;
         }
 
-        // Create CSV content
-        const headers = ["ID", "Make", "Model", "Year", "Price", "Description", "ImageData (truncated)"];
+        const headers = ["ID", "Make", "Model", "Year", "Price", "Description", "Image Count"];
         const rows = cars.map(car => [
             car.id,
             car.make,
             car.model,
             car.year,
             car.price,
-            `"${car.description.replace(/"/g, '""')}"`, // Escape quotes for CSV
-            `"${car.imageData ? car.imageData.substring(0, 50) + '...' : ''}"` // Truncate base64 for CSV
+            `"${car.description.replace(/"/g, '""')}"`,
+            (car.imagesData && car.imagesData.length) || 0 // Report image count instead of truncated data
         ]);
 
         let csvContent = headers.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
 
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
-        if (link.download !== undefined) { // Feature detection
+        if (link.download !== undefined) {
             const url = URL.createObjectURL(blob);
             link.setAttribute('href', url);
             link.setAttribute('download', 'car_data.csv');
@@ -270,7 +274,6 @@ function AdminPage({ user }) {
         setMessage(null);
     };
 
-    // If user prop is null, show login form
     if (!user) {
         return (
             <div className="container">
@@ -354,38 +357,48 @@ function AdminPage({ user }) {
                     ></textarea>
                 </label>
                 <label>
-                    Upload Image (JPG/PNG):
+                    Upload Images (JPG/PNG):
                     <input
                         type="file"
                         accept="image/jpeg, image/png"
+                        multiple // Allow multiple file selection
                         onChange={handleImageUpload}
-                        disabled={isCompressingImage} // Disable input during compression
+                        disabled={isCompressingImage}
                     />
                     {isCompressingImage && (
-                        <p className="image-upload-status compressing">Compressing image...</p>
+                        <p className="image-upload-status compressing">Compressing image(s)...</p>
                     )}
-                    {formImageData && !isCompressingImage && (
-                        <p className="image-upload-status">Image ready for upload.</p>
+                    {formImagesData.length > 0 && !isCompressingImage && (
+                        <p className="image-upload-status">{formImagesData.length} image(s) ready.</p>
                     )}
-                    {!formImageData && !isCompressingImage && !editingCar && (
-                         <p className="image-upload-status">Please upload an image.</p>
+                    {!formImagesData.length && !isCompressingImage && !editingCar && (
+                         <p className="image-upload-status">Please upload at least one image.</p>
                     )}
                 </label>
-                {formImageData && (
-                    <div style={{ textAlign: 'center', marginBottom: '15px' }}>
-                        <p style={{marginBottom: '5px', color: '#ccc', fontSize: '0.9em'}}>Image Preview:</p>
-                        <img
-                            src={formImageData}
-                            alt="Preview"
-                            style={{ maxWidth: '150px', maxHeight: '150px', border: '1px solid #555', borderRadius: '4px' }}
-                            onError={(e) => {
-                                e.target.onerror = null;
-                                e.target.src = 'https://placehold.co/150x150/555/FFF?text=Invalid+Image';
-                            }}
-                        />
+                {formImagesData.length > 0 && (
+                    <div className="image-preview-grid">
+                        {formImagesData.map((imageData, index) => (
+                            <div key={index} className="image-preview-item">
+                                <img
+                                    src={imageData}
+                                    alt={`Car Image Preview ${index + 1}`}
+                                    onError={(e) => {
+                                        e.target.onerror = null;
+                                        e.target.src = 'https://placehold.co/100x100/555/FFF?text=Error';
+                                    }}
+                                />
+                                <button
+                                    type="button"
+                                    className="remove-image"
+                                    onClick={() => handleRemoveImage(index)}
+                                >
+                                    &times;
+                                </button>
+                            </div>
+                        ))}
                     </div>
                 )}
-                <button type="submit" disabled={isCompressingImage}>
+                <button type="submit" disabled={isCompressingImage || (formImagesData.length === 0 && !editingCar)}>
                     {editingCar ? 'Update Car' : 'Add Car'}
                 </button>
                 {editingCar && <button type="button" onClick={clearForm} disabled={isCompressingImage}>Cancel Edit</button>}
@@ -398,7 +411,7 @@ function AdminPage({ user }) {
                 <p>No cars added yet. Use the form above to add one!</p>
             ) : (
                 <>
-                    <div className="admin-table-wrapper"> {/* Wrapper for horizontal scroll */}
+                    <div className="admin-table-wrapper">
                         <table className="admin-table">
                             <thead>
                                 <tr>
@@ -407,7 +420,7 @@ function AdminPage({ user }) {
                                     <th>Year</th>
                                     <th>Price</th>
                                     <th>Description</th>
-                                    <th>Image</th>
+                                    <th>Images</th> {/* Changed to "Images" */}
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -420,14 +433,21 @@ function AdminPage({ user }) {
                                         <td>Rs.{car.price ? car.price.toLocaleString() : 'N/A'}</td>
                                         <td>{car.description.substring(0, 50)}{car.description.length > 50 ? '...' : ''}</td>
                                         <td>
-                                            <img
-                                                src={car.imageData || 'https://placehold.co/80x40/555/FFF?text=No+Img'}
-                                                alt="Car Thumbnail"
-                                                onError={(e) => {
-                                                    e.target.onerror = null;
-                                                    e.target.src = 'https://placehold.co/80x40/555/FFF?text=No+Img';
-                                                }}
-                                            />
+                                            <div className="thumbnail-container">
+                                                {(car.imagesData || []).map((imgData, index) => (
+                                                    <img
+                                                        key={index}
+                                                        src={imgData || 'https://placehold.co/40x40/555/FFF?text=X'}
+                                                        alt={`Thumbnail ${index + 1}`}
+                                                        className="car-thumbnail"
+                                                        onError={(e) => {
+                                                            e.target.onerror = null;
+                                                            e.target.src = 'https://placehold.co/40x40/555/FFF?text=X';
+                                                        }}
+                                                    />
+                                                ))}
+                                                {(car.imagesData || []).length === 0 && 'No Images'}
+                                            </div>
                                         </td>
                                         <td className="actions">
                                             <button className="edit" onClick={() => handleEditCar(car)}>Edit</button>

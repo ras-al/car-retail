@@ -2,14 +2,15 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db, appId } from '../firebase/config';
-import ImageModal from './ImageModal'; // Import the new ImageModal component
+import ImageModal from './ImageModal'; // Import the ImageModal component
 
 function HomePage() {
-    const [allCars, setAllCars] = useState([]); // Stores all cars fetched from Firestore
-    const [filteredCars, setFilteredCars] = useState([]); // Stores cars after filtering
+    const [allCars, setAllCars] = useState([]);
+    const [filteredCars, setFilteredCars] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
-    const [selectedImage, setSelectedImage] = useState(null); // State for the image modal
+    const [modalImages, setModalImages] = useState(null); // Array of images for the modal
+    const [initialModalImageIndex, setInitialModalImageIndex] = useState(0); // Index of image to show first
 
     useEffect(() => {
         if (!db) {
@@ -21,7 +22,13 @@ function HomePage() {
         const carsCollectionRef = collection(db, `artifacts/${appId}/public/data/cars`);
         const unsubscribe = onSnapshot(carsCollectionRef, (snapshot) => {
             const carsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            carsData.sort((a, b) => b.year - a.year); // Sort by year descending
+            // Ensure imagesData is an array, default to empty array if not present
+            carsData.forEach(car => {
+                if (!Array.isArray(car.imagesData)) {
+                    car.imagesData = [];
+                }
+            });
+            carsData.sort((a, b) => b.year - a.year);
             setAllCars(carsData);
             setLoading(false);
         }, (error) => {
@@ -33,7 +40,6 @@ function HomePage() {
     }, []);
 
     useEffect(() => {
-        // Filter cars whenever allCars or searchTerm changes
         const lowercasedSearchTerm = searchTerm.toLowerCase();
         const results = allCars.filter(car =>
             car.make.toLowerCase().includes(lowercasedSearchTerm) ||
@@ -44,12 +50,14 @@ function HomePage() {
         setFilteredCars(results);
     }, [searchTerm, allCars]);
 
-    const openImageModal = (imageUrl) => {
-        setSelectedImage(imageUrl);
+    const openImageModal = (imagesArray, initialIndex = 0) => {
+        setModalImages(imagesArray);
+        setInitialModalImageIndex(initialIndex);
     };
 
     const closeImageModal = () => {
-        setSelectedImage(null);
+        setModalImages(null);
+        setInitialModalImageIndex(0);
     };
 
     if (loading) {
@@ -74,15 +82,30 @@ function HomePage() {
                 <div className="car-list">
                     {filteredCars.map((car) => (
                         <div key={car.id} className="car-card">
-                            <img
-                                src={car.imageData || 'https://placehold.co/400x200/555/FFF?text=No+Image'}
-                                alt={`${car.make} ${car.model}`}
-                                onClick={() => openImageModal(car.imageData)}
-                                onError={(e) => {
-                                    e.target.onerror = null;
-                                    e.target.src = 'https://placehold.co/400x200/555/FFF?text=No+Image';
-                                }}
-                            />
+                            <div className="image-gallery-container">
+                                {car.imagesData && car.imagesData.length > 0 ? (
+                                    car.imagesData.map((imageData, index) => (
+                                        <img
+                                            key={index}
+                                            src={imageData}
+                                            alt={`${car.make} ${car.model} Image ${index + 1}`}
+                                            className="gallery-image"
+                                            onClick={() => openImageModal(car.imagesData, index)}
+                                            onError={(e) => {
+                                                e.target.onerror = null;
+                                                e.target.src = 'https://placehold.co/400x200/555/FFF?text=Image+Error';
+                                            }}
+                                        />
+                                    ))
+                                ) : (
+                                    <img
+                                        src={'https://placehold.co/400x200/555/FFF?text=No+Images'}
+                                        alt="No images available"
+                                        className="gallery-image"
+                                        onClick={() => openImageModal(['https://placehold.co/800x600/555/FFF?text=No+Images'], 0)}
+                                    />
+                                )}
+                            </div>
                             <h3>{car.year} {car.make} {car.model}</h3>
                             <p>{car.description}</p>
                             <p className="price">Rs.{car.price ? car.price.toLocaleString() : 'N/A'}</p>
@@ -91,8 +114,12 @@ function HomePage() {
                 </div>
             )}
 
-            {selectedImage && (
-                <ImageModal imageUrl={selectedImage} onClose={closeImageModal} />
+            {modalImages && (
+                <ImageModal
+                    images={modalImages}
+                    initialImageIndex={initialModalImageIndex}
+                    onClose={closeImageModal}
+                />
             )}
         </div>
     );
